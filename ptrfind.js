@@ -39,8 +39,30 @@ function ptrFind(fromStart, fromEnd, toStartOrMod, toEnd) {
 
         let searchName = toStartOrMod.toString().toLowerCase();
 
-        // 1. Resolve Module
-        if (searchName === "image" || searchName === "pie") {
+        // 1. Resolve Module or Image/Stack
+       if (searchName === "stack") {
+    try {
+        const teb = host.currentThread.Environment.EnvironmentBlock;
+
+        try {
+            // PVOID typed values must go through .toString() → parseInt64
+            // to become usable UInt64s for arithmetic and comparison
+            targetMax = host.parseInt64(teb.NtTib.StackBase.toString());
+            targetMin = host.parseInt64(teb.NtTib.StackLimit.toString());
+        } catch (symErr) {
+            const tebAddr = teb.targetLocation.address;
+            targetMax = host.memory.readMemoryValues(tebAddr.add(0x08), 1, 8)[0];
+            targetMin = host.memory.readMemoryValues(tebAddr.add(0x10), 1, 8)[0];
+        }
+
+    } catch (e) {
+        log("\n--- STACK RESOLUTION FAILURE ---\n");
+        log(`Error: ${e.message}\n`);
+        return;
+    }
+    log(`>>> Resolved "stack" to: ${targetMin.toString(16)} - ${targetMax.toString(16)}\n`);
+}
+        else if (searchName === "image" || searchName === "pie") {
             for (let mod of host.currentProcess.Modules) {
                 targetMin = to64(mod.BaseAddress);
                 targetMax = targetMin.add(mod.Size);
@@ -71,6 +93,7 @@ function ptrFind(fromStart, fromEnd, toStartOrMod, toEnd) {
         log(`Searching ${start.toString(16)} to ${end.toString(16)}...\n\n`);
 
         // 3. Scan loop using standard math if objects fail, 
+        let found = 0;
         for (let curr = start; curr.asNumber() < end.asNumber(); curr = curr.add(ptrSize)) {
             try {
                 let val = host.memory.readMemoryValues(curr, 1, ptrSize)[0];
@@ -82,12 +105,13 @@ function ptrFind(fromStart, fromEnd, toStartOrMod, toEnd) {
                         symStr = ` (${host.symbols.lookupSymbol(val64)})`;
                     } catch (e) {}
                     log(`[${curr.toString(16)}] -> ${val64.toString(16)}${symStr}\n`);
+                    found += 1;
                 }
             } catch (e) {
                 // Ignore memory read errors (unmapped pages)
             }
         }
-        log("\nScan complete.\n");
+        log(`\nScan complete. Found: ${found} matches\n`);
 
     } catch (err) {
         log("Error: " + err + "\n");
